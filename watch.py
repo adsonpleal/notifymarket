@@ -1,5 +1,7 @@
 """Price watcher for ro.gnjoylatam.com shop-search. See README for details."""
 
+import datetime
+import html
 import json
 import os
 import re
@@ -62,10 +64,10 @@ CARD_RE = re.compile(
 )
 
 
-def parse_listings(html: str, item_id: int) -> list[dict]:
+def parse_listings(html_text: str, item_id: int) -> list[dict]:
     """Return all listings matching item_id, sorted ascending by price."""
     listings = []
-    for m in CARD_RE.finditer(html):
+    for m in CARD_RE.finditer(html_text):
         if int(m.group("id")) != item_id:
             continue
         price_int = int(m.group("price").replace(".", ""))
@@ -73,8 +75,8 @@ def parse_listings(html: str, item_id: int) -> list[dict]:
             {
                 "ssi": m.group("ssi"),
                 "price": price_int,
-                "trade": m.group("trade").strip(),
-                "seller": m.group("seller").strip(),
+                "trade": html.unescape(m.group("trade")).strip(),
+                "seller": html.unescape(m.group("seller")).strip(),
             }
         )
     listings.sort(key=lambda x: x["price"])
@@ -114,28 +116,56 @@ def fmt(n: int) -> str:
     return f"{n:,}".replace(",", ".")
 
 
-def process_item(item: dict, server: str, topic: str | None, state: dict) -> bool:
-    """Process one item. Returns True if processed (success), False on hard error."""
+def md_escape(s: str) -> str:
+    """Escape characters that break markdown table cells."""
+    return s.replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip() or "—"
+
+
+# Status codes used by process_item to drive log lines, summary rendering, and exit code.
+STATUS_OK = "ok"            # listings present, lowest above target
+STATUS_EMPTY = "empty"      # zero listings for this item id
+STATUS_ERROR = "error"      # fetch/parse error
+STATUS_NOTIFIED = "notified"    # lowest <= target AND a notification was sent this run
+STATUS_SILENCED = "silenced"    # lowest <= target but already alerted at this price (no notif)
+STATUS_DRY_RUN = "dry_run"      # lowest <= target but NTFY_TOPIC missing
+
+
+def process_item(item: dict, server: str, topic: str | None, state: dict) -> dict:
+    """Returns a result dict for log output, summary rendering, and exit-code accounting."""
     name = item["name"]
     item_id = int(item["item_id"])
     target = int(item["target_price"])
     url = build_url(server, item["search"])
 
+    result = {
+        "name": name,
+        "item_id": item_id,
+        "target": target,
+        "url": url,
+        "listings": [],
+        "status": STATUS_OK,
+        "error": None,
+    }
+
     try:
-        html = fetch(url)
+        page_html = fetch(url)
     except Exception as e:
         print(f"[{name}] ERROR fetching: {e}", file=sys.stderr)
-        return False
+        result["status"] = STATUS_ERROR
+        result["error"] = str(e)
+        return result
 
-    listings = parse_listings(html, item_id)
+    listings = parse_listings(page_html, item_id)
+    result["listings"] = listings
     state_key = str(item_id)
     item_state = state.get(state_key, {"last_alerted_price": None})
 
     if not listings:
         print(f"[{name}] 0 listings (target <= {fmt(target)}z)")
+        result["status"] = STATUS_EMPTY
         item_state["last_alerted_price"] = None
         state[state_key] = item_state
-        return True
+        return result
 
     lowest = listings[0]
     print(
@@ -149,10 +179,11 @@ def process_item(item: dict, server: str, topic: str | None, state: dict) -> boo
 
     if lowest["price"] > target:
         if last_alerted is not None:
-            print(f"  reset: lowest is above target, clearing last_alerted")
+            print("  reset: lowest is above target, clearing last_alerted")
         item_state["last_alerted_price"] = None
         state[state_key] = item_state
-        return True
+        result["status"] = STATUS_OK
+        return result
 
     should_notify = last_alerted is None or lowest["price"] < last_alerted
 
@@ -162,12 +193,14 @@ def process_item(item: dict, server: str, topic: str | None, state: dict) -> boo
             f"last alerted {fmt(last_alerted)}z"
         )
         state[state_key] = item_state
-        return True
+        result["status"] = STATUS_SILENCED
+        return result
 
     if topic is None:
         print("  WARN: NTFY_TOPIC not set, would have notified but skipping", file=sys.stderr)
         state[state_key] = item_state
-        return True
+        result["status"] = STATUS_DRY_RUN
+        return result
 
     title = f"{name} @ {fmt(lowest['price'])}z"
     body = (
@@ -178,11 +211,93 @@ def process_item(item: dict, server: str, topic: str | None, state: dict) -> boo
         notify(topic, title, body, url)
         print(f"  NOTIFIED: {title}")
         item_state["last_alerted_price"] = lowest["price"]
+        result["status"] = STATUS_NOTIFIED
     except Exception as e:
         print(f"  ERROR sending notification: {e}", file=sys.stderr)
+        result["status"] = STATUS_ERROR
+        result["error"] = f"notification failed: {e}"
 
     state[state_key] = item_state
-    return True
+    return result
+
+
+STATUS_BADGE = {
+    STATUS_OK: ("✅", "acima do alvo"),
+    STATUS_EMPTY: ("⚪", "sem listagens"),
+    STATUS_ERROR: ("❌", "erro"),
+    STATUS_NOTIFIED: ("🎯", "ABAIXO DO ALVO — notificação enviada"),
+    STATUS_SILENCED: ("🔇", "abaixo do alvo — silenciado (já alertado nesse preço)"),
+    STATUS_DRY_RUN: ("⚠️", "abaixo do alvo — `NTFY_TOPIC` não configurado"),
+}
+
+
+def render_summary(results: list[dict], server: str, ran_at: datetime.datetime) -> str:
+    lines = []
+    notified_count = sum(1 for r in results if r["status"] == STATUS_NOTIFIED)
+    lines.append("# Resultado da execução")
+    lines.append("")
+    lines.append(
+        f"_Servidor: **{server}** · "
+        f"Executado em {ran_at.strftime('%Y-%m-%d %H:%M:%S UTC')}_"
+    )
+    lines.append("")
+
+    if notified_count > 0:
+        lines.append(f"🎯 **{notified_count} notificação(ões) enviada(s) nesta execução.**")
+    else:
+        lines.append("Nenhuma notificação enviada nesta execução.")
+    lines.append("")
+
+    # Per-item sections
+    for r in results:
+        emoji, status_label = STATUS_BADGE.get(r["status"], ("•", r["status"]))
+        lines.append(f"## {emoji} {r['name']}")
+        lines.append("")
+        lines.append(
+            f"**Alvo:** ≤ {fmt(r['target'])}z &nbsp;·&nbsp; "
+            f"**Listagens:** {len(r['listings'])} &nbsp;·&nbsp; "
+            f"**Status:** {status_label}"
+        )
+        lines.append("")
+        lines.append(f"[Ver no site]({r['url']})")
+        lines.append("")
+
+        if r["status"] == STATUS_ERROR:
+            lines.append(f"> ❌ Erro: `{r['error']}`")
+            lines.append("")
+            continue
+
+        if not r["listings"]:
+            lines.append("> Nenhuma listagem encontrada para esse `item_id` no servidor.")
+            lines.append("")
+            continue
+
+        lines.append("| # | Preço | Vendedor | Comércio |")
+        lines.append("|---|------:|----------|----------|")
+        for idx, lst in enumerate(r["listings"], start=1):
+            price_str = f"{fmt(lst['price'])}z"
+            # Bold the lowest row, plus add a marker if it's at or below target.
+            if idx == 1:
+                marker = " 🎯" if lst["price"] <= r["target"] else ""
+                price_str = f"**{price_str}**{marker}"
+            lines.append(
+                f"| {idx} | {price_str} | "
+                f"{md_escape(lst['seller'])} | {md_escape(lst['trade'])} |"
+            )
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_step_summary(content: str) -> None:
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    try:
+        with open(summary_path, "a", encoding="utf-8") as f:
+            f.write(content)
+    except OSError as e:
+        print(f"WARN: could not write step summary: {e}", file=sys.stderr)
 
 
 def main() -> int:
@@ -203,16 +318,19 @@ def main() -> int:
         print("WARN: NTFY_TOPIC not set — running in dry-run mode (no notifications)", file=sys.stderr)
 
     state = load_state()
-    successes = 0
+    results = []
 
     for idx, item in enumerate(items):
         if idx > 0:
             time.sleep(SLEEP_BETWEEN_ITEMS)
-        if process_item(item, server, topic, state):
-            successes += 1
+        results.append(process_item(item, server, topic, state))
 
     save_state(state)
 
+    ran_at = datetime.datetime.now(datetime.timezone.utc)
+    write_step_summary(render_summary(results, server, ran_at))
+
+    successes = sum(1 for r in results if r["status"] != STATUS_ERROR)
     if successes == 0:
         print("ERROR: every item failed", file=sys.stderr)
         return 1
