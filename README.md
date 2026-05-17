@@ -30,12 +30,23 @@ curl -d "teste" ntfy.sh/SEU-TOPICO-AQUI
 ```
 O celular deve vibrar em ~1 segundo.
 
-### 3. Configure o secret no GitHub
+### 3. Configure o secret `NTFY_TOPIC` no seu fork
 
-No seu fork, vá em **Settings → Secrets and variables → Actions → New repository secret**:
+O nome do tópico ntfy precisa ficar guardado como **secret** do GitHub Actions — assim ele fica disponível para o workflow mas não aparece no código (que é público) nem nos logs.
 
-- **Name**: `NTFY_TOPIC`
-- **Value**: o nome do tópico que você criou no passo 2 (apenas o nome, sem `https://ntfy.sh/`)
+Passo a passo:
+
+1. Na página do seu fork no GitHub, clique na aba **Settings** (canto superior direito da barra do repositório).
+2. No menu lateral esquerdo, vá em **Secrets and variables** e clique em **Actions**.
+3. Clique no botão verde **New repository secret**.
+4. Preencha:
+   - **Name**: `NTFY_TOPIC` (exatamente assim, em maiúsculas, sem espaços).
+   - **Secret**: cole o nome do tópico que você escolheu no passo 2 — **apenas o nome**, sem `https://ntfy.sh/` e sem barras. Ex: `meutopico-abc123def456ghij`.
+5. Clique em **Add secret**.
+
+Pronto. O workflow vai injetar esse valor como variável de ambiente `NTFY_TOPIC` quando rodar o `watch.py`. O secret nunca fica visível depois de salvo (nem para você) — se precisar mudar o tópico, é só clicar em **Update** ao lado de `NTFY_TOPIC` e colar o novo valor.
+
+> **Atenção**: se você esquecer de configurar esse secret, o workflow ainda roda e imprime os preços nos logs, mas avisa `WARN: NTFY_TOPIC not set — running in dry-run mode (no notifications)` e nenhum push é enviado.
 
 ### 4. Edite `config.yaml`
 
@@ -57,7 +68,7 @@ Campos:
 
 **Como descobrir o `item_id`:** abra a página de shop-search no navegador (ex: `https://ro.gnjoylatam.com/pt/intro/shop-search/trading?storeType=BUY&serverType=FREYA&searchWord=NOME`), encontre o card do item desejado, e inspecione o elemento `<li class="card_shop_card__...">`. O atributo `data-id` é o `item_id`.
 
-Servidor é global (campo `server`). Valores comuns: `FREYA`, `THOR`, etc. — use o nome exato que aparece no seletor da página.
+Servidor é global (campo `server`). Valores válidos: `FREYA`, `NIDHOGG` — use o nome exato que aparece no seletor da página.
 
 ### 5. Habilite Actions no fork (se necessário)
 
