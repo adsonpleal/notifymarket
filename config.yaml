@@ -11,7 +11,7 @@ items:
   - name: "Ovo de Kiel-D-01"
     search: "Kiel"
     item_id: 9126
-    target_price: 38000000
+    target_price: 30000000
 
   - name: "Familiar de Combate"
     search: "Familiar de Combate"
