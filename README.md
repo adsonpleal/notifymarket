@@ -4,7 +4,7 @@ Monitora preços de itens no shop-search do Ragnarok Online LATAM (`ro.gnjoylata
 
 ## Como funciona
 
-- Um workflow do GitHub Actions roda a cada 15 minutos.
+- Um workflow do GitHub Actions roda a cada 5 minutos.
 - Para cada item listado em `config.yaml`, o script `watch.py` consulta a página de shop-search no servidor configurado e identifica o menor preço de COMPRA.
 - Os preços atuais (e o vendedor + nome do comércio do menor) são impressos nos logs do job — você pode acompanhar acessando a aba **Actions** do repositório.
 - Se o menor preço for menor ou igual ao `target_price`, o script envia uma notificação push via [ntfy.sh](https://ntfy.sh) com o nome do item, preço, vendedor e um link direto para a listagem.
