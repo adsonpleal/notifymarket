@@ -1,0 +1,19 @@
+# Servidor de RO LATAM. Os itens abaixo serão consultados nesse servidor.
+server: FREYA
+
+# Lista de itens a monitorar.
+# - name: rótulo amigável usado nos logs e nas notificações
+# - search: termo de busca (parâmetro searchWord da página de shop-search)
+# - item_id: ID do item no catálogo (atributo data-id dos cards de listagem)
+#            usado para filtrar resultados caso a busca retorne outros itens
+# - target_price: dispara alerta quando o menor preço de COMPRA for <= esse valor (em zeny)
+items:
+  - name: "Ovo de Kiel-D-01"
+    search: "Kiel"
+    item_id: 9126
+    target_price: 30000000
+
+  - name: "Familiar de Combate"
+    search: "Familiar de Combate"
+    item_id: 19101
+    target_price: 20000000

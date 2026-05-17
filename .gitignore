@@ -1,0 +1,5 @@
+state.json
+_fetched_*.html
+__pycache__/
+*.pyc
+.venv/
