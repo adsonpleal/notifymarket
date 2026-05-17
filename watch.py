@@ -313,7 +313,7 @@ def main() -> int:
         print("ERROR: config has no items", file=sys.stderr)
         return 1
 
-    topic = os.environ.get("NTFY_TOPIC")
+    topic = (os.environ.get("NTFY_TOPIC") or "").lstrip("﻿").strip() or None
     if not topic:
         print("WARN: NTFY_TOPIC not set — running in dry-run mode (no notifications)", file=sys.stderr)
 
